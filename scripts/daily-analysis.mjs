@@ -70,7 +70,7 @@ async function callGeminiAPI(prompt) {
 /**
  * 네이버 뉴스 검색 API 호출
  */
-async function fetchNaverNews(query, display = 10) {
+async function fetchNaverNews(query, display = 15) {
   if (!NAVER_CLIENT_ID || !NAVER_CLIENT_SECRET) {
     console.log('⚠️ 네이버 API 키가 설정되지 않았습니다. 샘플 데이터를 사용합니다.');
     return getSampleNews();
@@ -136,22 +136,45 @@ function getSampleNews() {
 }
 
 /**
- * AI 기반 섹터 분석
+ * AI 기반 심층 투자 분석
+ * - 대중 심리/트렌드 분석
+ * - 숨겨진 수혜주 발굴
+ * - 해외/국내 글로벌 관점
  */
 async function analyzeSectorsWithAI(news) {
   const newsText = news.map(n => `- ${n.title}: ${n.summary}`).join('\n');
   
-  const prompt = `당신은 전문 증권 애널리스트입니다. 다음 뉴스를 분석하여 투자 유망 섹터를 추천해주세요.
+  const prompt = `당신은 월가 출신 헤지펀드 매니저이자 행동경제학 전문가입니다. 
+단순한 산업 분류(반도체, 2차전지 등)가 아닌, 숨겨진 투자 기회를 발굴해주세요.
 
-오늘의 주요 뉴스:
+## 분석 관점
+1. **대중 심리 & SNS 트렌드**: 바이럴 현상, 소비자 행동 변화, MZ세대 트렌드
+   - 예시: "불닭볶음면 해외 SNS 화제" → 삼양식품 수혜
+   - 예시: "테일러 스위프트 NFL 경기 참석" → NFL 시청률/관련주 상승
+   
+2. **연결고리 투자 (2차, 3차 수혜)**: 직접 수혜가 아닌 간접 수혜주
+   - 예시: "AI 열풍" → 엔비디아(직접) → 전력인프라/냉각장치(간접)
+   
+3. **글로벌 매크로**: 해외 정책, 지정학, 환율, 원자재 흐름
+   
+4. **역발상 투자**: 과매도 구간, 시장이 놓친 기회
+
+오늘의 뉴스:
 ${newsText}
 
-다음 JSON 형식으로 정확히 3개의 유망 섹터를 분석해주세요:
+## 출력 형식
+다음 JSON 형식으로 정확히 4개의 투자 테마를 분석해주세요.
+일반적인 섹터명(AI반도체, 2차전지)보다 구체적인 테마명을 사용하세요.
+
 [
   {
-    "name": "섹터명",
+    "name": "구체적인 투자 테마명 (예: K-푸드 글로벌 확장, AI 전력 인프라, 엔터 IP 확장)",
     "outlook": "bullish 또는 bearish 또는 neutral",
-    "reason": "해당 섹터를 추천하는 구체적인 이유 (2-3문장)",
+    "reason": "왜 이 테마에 주목해야 하는지, 대중 심리나 트렌드 연결고리 포함 (3-4문장)",
+    "triggerNews": "이 테마를 도출한 핵심 뉴스/이벤트",
+    "directBeneficiary": "직접 수혜 기업/섹터",
+    "indirectBeneficiary": "간접/2차 수혜 기업/섹터", 
+    "risk": "주의해야 할 리스크 요인",
     "keywords": ["관련 키워드 5개"]
   }
 ]
@@ -162,11 +185,10 @@ JSON만 출력하세요.`;
   
   if (response) {
     try {
-      // JSON 부분만 추출
       const jsonMatch = response.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         const sectors = JSON.parse(jsonMatch[0]);
-        console.log('   ✅ AI 섹터 분석 완료');
+        console.log('   ✅ AI 심층 분석 완료');
         return sectors;
       }
     } catch (e) {
@@ -174,7 +196,6 @@ JSON만 출력하세요.`;
     }
   }
 
-  // 폴백: 기본 섹터 분석
   return getDefaultSectors();
 }
 
@@ -202,35 +223,50 @@ function getDefaultSectors() {
 }
 
 /**
- * AI 기반 종목 추천
+ * AI 기반 종목 추천 (숨겨진 수혜주 포함)
  */
 async function generateStockRecommendationsWithAI(sectors, news) {
-  const sectorNames = sectors.map(s => s.name).join(', ');
-  const newsText = news.slice(0, 5).map(n => `- ${n.title}`).join('\n');
+  const sectorsInfo = sectors.map(s => `- ${s.name}: ${s.reason}`).join('\n');
+  const newsText = news.slice(0, 7).map(n => `- ${n.title}: ${n.summary}`).join('\n');
   
-  const prompt = `당신은 전문 증권 애널리스트입니다. 다음 정보를 바탕으로 투자 종목을 추천해주세요.
+  const prompt = `당신은 숨겨진 투자 기회를 발굴하는 전문 애널리스트입니다.
 
-유망 섹터: ${sectorNames}
+## 오늘의 투자 테마
+${sectorsInfo}
 
-최근 뉴스:
+## 최근 뉴스
 ${newsText}
 
-다음 JSON 형식으로 정확히 3개의 종목을 추천해주세요. 실제 한국 상장 종목만 추천하세요:
+## 종목 선정 기준
+1. **숨은 수혜주**: 뉴스에 직접 언급되지 않았지만 간접적으로 수혜받을 종목
+2. **대중 심리 반영**: SNS 트렌드, 소비자 행동 변화와 연결된 종목
+3. **글로벌 연결고리**: 해외 이벤트가 국내 기업에 미치는 영향
+4. **밸류에이션**: 현재 저평가되어 있거나 모멘텀이 살아나는 종목
+
+## 주의사항
+- 삼성전자, SK하이닉스 같은 대형주보다는 중소형 숨은 수혜주 위주
+- 단, 확실한 모멘텀이 있다면 대형주도 포함 가능
+- 실제 한국 상장 종목만 (코스피/코스닥)
+
+다음 JSON 형식으로 정확히 4개의 종목을 추천해주세요:
 [
   {
-    "code": "종목코드 (예: 005930)",
+    "code": "종목코드 (예: 003230)",
     "name": "종목명",
-    "sector": "해당 섹터",
-    "currentPrice": 현재가(숫자),
+    "theme": "연결된 투자 테마",
+    "whyNow": "지금 이 종목에 주목해야 하는 이유 (대중 심리, 트렌드 연결)",
+    "hiddenLink": "뉴스와 이 종목의 숨겨진 연결고리",
+    "currentPrice": 현재 추정가(숫자),
     "targetPrice": 목표가(숫자),
     "stopLoss": 손절가(숫자),
-    "entryPrice": 진입가(숫자),
-    "rsiValue": RSI값(30-70 사이 숫자),
+    "entryPrice": 매수 희망가(숫자),
+    "rsiValue": RSI 추정값(30-70),
     "supportLevel": 지지선(숫자),
     "resistanceLevel": 저항선(숫자),
-    "fundamentalAnalysis": "기본적 분석 (2-3문장)",
-    "technicalAnalysis": "기술적 분석 (2-3문장)",
-    "investmentScenario": "구체적인 매매 시나리오"
+    "fundamentalAnalysis": "기본적 분석 - 실적, 밸류에이션, 성장성",
+    "technicalAnalysis": "기술적 분석 - 차트, 거래량, 수급",
+    "investmentScenario": "구체적인 매매 시나리오 (진입/추가매수/손절 시점)",
+    "riskFactor": "이 종목의 리스크 요인"
   }
 ]
 
@@ -243,7 +279,7 @@ JSON만 출력하세요.`;
       const jsonMatch = response.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         const stocks = JSON.parse(jsonMatch[0]);
-        console.log('   ✅ AI 종목 추천 완료');
+        console.log('   ✅ AI 숨은 수혜주 분석 완료');
         return stocks;
       }
     } catch (e) {
@@ -251,7 +287,6 @@ JSON만 출력하세요.`;
     }
   }
 
-  // 폴백: 기본 종목 추천
   return getDefaultStockRecommendations();
 }
 
@@ -309,15 +344,18 @@ function getDefaultStockRecommendations() {
  * AI 기반 종합 투자 인사이트 생성
  */
 async function generateInvestmentInsight(sectors, stocks, news) {
-  const prompt = `당신은 전문 투자 자문가입니다. 오늘의 시장 상황을 종합하여 간단한 투자 조언을 작성해주세요.
+  const prompt = `당신은 헤지펀드 CIO입니다. 오늘의 시장을 대중 심리와 숨겨진 기회 관점에서 분석해주세요.
 
-유망 섹터: ${sectors.map(s => s.name).join(', ')}
-추천 종목: ${stocks.map(s => s.name).join(', ')}
+투자 테마: ${sectors.map(s => s.name).join(', ')}
+주목 종목: ${stocks.map(s => s.name).join(', ')}
 
-100자 이내로 오늘의 핵심 투자 포인트를 작성해주세요.`;
+다음 형식으로 150자 이내 작성:
+"[핵심 트렌드/심리] → [투자 기회] → [주의점]"
+
+예시: "K-콘텐츠 글로벌 확산이 IP 관련주에 모멘텀 제공 → 엔터/게임 2차 수혜주 주목 → 단기 과열 시 분할매수 권장"`;
 
   const response = await callGeminiAPI(prompt);
-  return response || '오늘도 분할 매수와 손절 원칙을 지키며 안정적인 투자를 권장합니다.';
+  return response || '대중 심리와 트렌드 변화를 주시하며, 숨겨진 수혜주를 발굴하는 투자를 권장합니다.';
 }
 
 /**
@@ -375,25 +413,33 @@ function generateEmailHTML(data) {
     </div>
   `).join('')}
 
-  <h2>🎯 AI 추천 유망 섹터</h2>
+  <h2>🎯 숨겨진 투자 테마</h2>
   ${sectors.map(sector => `
     <div class="card ${sector.outlook}">
       <strong>${sector.name}</strong>
       <span class="badge badge-${sector.outlook}">
         ${sector.outlook === 'bullish' ? '📈 강세' : sector.outlook === 'bearish' ? '📉 약세' : '➡️ 중립'}
       </span>
+      ${sector.triggerNews ? `<p style="color:#64748b;font-size:13px;margin:8px 0">📰 <em>${sector.triggerNews}</em></p>` : ''}
       <p>${sector.reason}</p>
+      ${sector.directBeneficiary ? `<p><strong>💎 직접 수혜:</strong> ${sector.directBeneficiary}</p>` : ''}
+      ${sector.indirectBeneficiary ? `<p><strong>🔗 간접 수혜:</strong> ${sector.indirectBeneficiary}</p>` : ''}
+      ${sector.risk ? `<p style="color:#ef4444;font-size:13px">⚠️ 리스크: ${sector.risk}</p>` : ''}
       <div class="keywords">
-        ${sector.keywords.map(k => `<span class="keyword">${k}</span>`).join('')}
+        ${(sector.keywords || []).map(k => `<span class="keyword">${k}</span>`).join('')}
       </div>
     </div>
   `).join('')}
 
-  <h2>💎 AI 추천 종목</h2>
+  <h2>💎 숨은 수혜주 발굴</h2>
   ${stocks.map(stock => `
     <div class="card">
       <strong>${stock.name}</strong> <span style="color:#64748b">(${stock.code})</span>
-      <span class="badge" style="background:#e0e7ff;color:#4338ca;margin-left:8px">${stock.sector}</span>
+      <span class="badge" style="background:#e0e7ff;color:#4338ca;margin-left:8px">${stock.theme || stock.sector || ''}</span>
+      
+      ${stock.whyNow ? `<p style="background:#fef3c7;padding:10px;border-radius:8px;margin:10px 0"><strong>🔥 지금 주목하는 이유:</strong> ${stock.whyNow}</p>` : ''}
+      ${stock.hiddenLink ? `<p><strong>🔗 숨겨진 연결고리:</strong> ${stock.hiddenLink}</p>` : ''}
+      
       <div class="stock-grid">
         <div class="stock-row">
           <span>현재가</span>
@@ -408,7 +454,7 @@ function generateEmailHTML(data) {
           <span class="stop">${Number(stock.stopLoss).toLocaleString()}원</span>
         </div>
         <div class="stock-row">
-          <span>진입가</span>
+          <span>매수 희망가</span>
           <span>${Number(stock.entryPrice).toLocaleString()}원</span>
         </div>
         <div class="stock-row">
@@ -418,7 +464,8 @@ function generateEmailHTML(data) {
       </div>
       <p><strong>🔍 기본적 분석:</strong> ${stock.fundamentalAnalysis}</p>
       <p><strong>📊 기술적 분석:</strong> ${stock.technicalAnalysis}</p>
-      <p><strong>🎯 투자 시나리오:</strong> ${stock.investmentScenario}</p>
+      <p><strong>🎯 매매 시나리오:</strong> ${stock.investmentScenario}</p>
+      ${stock.riskFactor ? `<p style="color:#ef4444;font-size:13px">⚠️ 리스크: ${stock.riskFactor}</p>` : ''}
     </div>
   `).join('')}
 
