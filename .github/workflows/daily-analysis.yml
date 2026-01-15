@@ -6,6 +6,12 @@ on:
     - cron: '0 23 * * *'
   workflow_dispatch: # 수동 실행 가능
 
+# GitHub Pages 배포를 위한 권한 설정
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -37,3 +43,30 @@ jobs:
           name: daily-analysis-${{ github.run_number }}
           path: output/
           retention-days: 30
+
+      # GitHub Pages용 파일 준비
+      - name: Prepare GitHub Pages
+        run: |
+          mkdir -p docs
+          # 최신 분석 결과를 index.html로 복사
+          LATEST_HTML=$(ls -t output/*.html 2>/dev/null | head -1)
+          if [ -n "$LATEST_HTML" ]; then
+            cp "$LATEST_HTML" docs/index.html
+            echo "✅ Dashboard prepared: $LATEST_HTML -> docs/index.html"
+          fi
+          # JSON도 복사 (API처럼 사용 가능)
+          LATEST_JSON=$(ls -t output/*.json 2>/dev/null | head -1)
+          if [ -n "$LATEST_JSON" ]; then
+            cp "$LATEST_JSON" docs/latest.json
+          fi
+          # 히스토리 보관
+          cp output/*.html docs/ 2>/dev/null || true
+          cp output/*.json docs/ 2>/dev/null || true
+
+      - name: Commit and push to GitHub Pages
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add docs/
+          git commit -m "📊 Daily analysis update - $(date +'%Y-%m-%d')" || echo "No changes to commit"
+          git push
