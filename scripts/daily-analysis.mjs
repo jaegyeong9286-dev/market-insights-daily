@@ -7,6 +7,179 @@
 import fs from 'fs';
 import path from 'path';
 
+// Yahoo Finance 한국 종목 코드 변환 (005930 -> 005930.KS)
+function toYahooSymbol(code) {
+  // 코스피는 .KS, 코스닥은 .KQ
+  // 간단히 .KS로 통일 (대부분 코스피 대형주)
+  return `${code}.KS`;
+}
+
+/**
+ * Yahoo Finance API로 주가 데이터 가져오기 (무료)
+ */
+async function fetchStockData(code, days = 60) {
+  try {
+    const symbol = toYahooSymbol(code);
+    const endDate = Math.floor(Date.now() / 1000);
+    const startDate = endDate - (days * 24 * 60 * 60);
+    
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?period1=${startDate}&period2=${endDate}&interval=1d`;
+    
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Yahoo Finance API 오류: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    const result = data.chart?.result?.[0];
+    
+    if (!result) {
+      throw new Error('데이터 없음');
+    }
+    
+    const timestamps = result.timestamp || [];
+    const quotes = result.indicators?.quote?.[0] || {};
+    
+    const prices = timestamps.map((ts, i) => ({
+      date: new Date(ts * 1000).toISOString().split('T')[0],
+      open: quotes.open?.[i],
+      high: quotes.high?.[i],
+      low: quotes.low?.[i],
+      close: quotes.close?.[i],
+      volume: quotes.volume?.[i],
+    })).filter(p => p.close != null);
+    
+    // 기술적 지표 계산
+    const closes = prices.map(p => p.close);
+    const volumes = prices.map(p => p.volume);
+    
+    return {
+      symbol: code,
+      name: result.meta?.shortName || code,
+      currentPrice: closes[closes.length - 1],
+      prices,
+      technicals: calculateTechnicals(closes, volumes),
+    };
+  } catch (error) {
+    console.log(`   ⚠️ ${code} 주가 데이터 가져오기 실패:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * 기술적 지표 계산
+ */
+function calculateTechnicals(closes, volumes) {
+  const len = closes.length;
+  if (len < 20) return null;
+  
+  // 이동평균선
+  const ma5 = closes.slice(-5).reduce((a, b) => a + b, 0) / 5;
+  const ma20 = closes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+  const ma60 = len >= 60 ? closes.slice(-60).reduce((a, b) => a + b, 0) / 60 : null;
+  
+  // RSI (14일)
+  const rsiPeriod = 14;
+  let gains = 0, losses = 0;
+  for (let i = len - rsiPeriod; i < len; i++) {
+    const change = closes[i] - closes[i - 1];
+    if (change > 0) gains += change;
+    else losses -= change;
+  }
+  const avgGain = gains / rsiPeriod;
+  const avgLoss = losses / rsiPeriod;
+  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  const rsi = 100 - (100 / (1 + rs));
+  
+  // 볼린저 밴드 (20일)
+  const std20 = Math.sqrt(
+    closes.slice(-20).reduce((sum, p) => sum + Math.pow(p - ma20, 2), 0) / 20
+  );
+  const bollingerUpper = ma20 + (std20 * 2);
+  const bollingerLower = ma20 - (std20 * 2);
+  
+  // 거래량 분석
+  const avgVolume = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+  const currentVolume = volumes[len - 1];
+  const volumeRatio = currentVolume / avgVolume;
+  
+  // 최근 추세
+  const priceChange5d = ((closes[len - 1] - closes[len - 6]) / closes[len - 6]) * 100;
+  const priceChange20d = ((closes[len - 1] - closes[len - 21]) / closes[len - 21]) * 100;
+  
+  // 지지/저항선 (최근 20일 고가/저가)
+  const recent20High = Math.max(...closes.slice(-20));
+  const recent20Low = Math.min(...closes.slice(-20));
+  
+  return {
+    currentPrice: closes[len - 1],
+    ma5: Math.round(ma5),
+    ma20: Math.round(ma20),
+    ma60: ma60 ? Math.round(ma60) : null,
+    rsi: Math.round(rsi * 10) / 10,
+    bollingerUpper: Math.round(bollingerUpper),
+    bollingerLower: Math.round(bollingerLower),
+    volumeRatio: Math.round(volumeRatio * 100) / 100,
+    priceChange5d: Math.round(priceChange5d * 100) / 100,
+    priceChange20d: Math.round(priceChange20d * 100) / 100,
+    support: Math.round(recent20Low),
+    resistance: Math.round(recent20High),
+  };
+}
+
+/**
+ * QuickChart.io로 차트 이미지 URL 생성
+ */
+function generateChartUrl(stockData) {
+  if (!stockData?.prices || stockData.prices.length < 10) return null;
+  
+  const recentPrices = stockData.prices.slice(-30);
+  const labels = recentPrices.map(p => p.date.slice(5)); // MM-DD
+  const closes = recentPrices.map(p => p.close);
+  const ma20 = stockData.technicals?.ma20;
+  
+  const chartConfig = {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: '종가',
+          data: closes,
+          borderColor: '#4f46e5',
+          backgroundColor: 'rgba(79, 70, 229, 0.1)',
+          fill: true,
+          tension: 0.1,
+        },
+        ...(ma20 ? [{
+          label: '20일선',
+          data: Array(closes.length).fill(ma20),
+          borderColor: '#f59e0b',
+          borderDash: [5, 5],
+          fill: false,
+        }] : []),
+      ],
+    },
+    options: {
+      plugins: {
+        title: { display: true, text: `${stockData.name} (${stockData.symbol})` },
+        legend: { display: true },
+      },
+      scales: {
+        y: { beginAtZero: false },
+      },
+    },
+  };
+  
+  const encodedConfig = encodeURIComponent(JSON.stringify(chartConfig));
+  return `https://quickchart.io/chart?c=${encodedConfig}&w=600&h=300&bkg=white`;
+}
+
 // 환경 변수
 const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID;
 const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET;
@@ -341,13 +514,120 @@ function getDefaultStockRecommendations() {
 }
 
 /**
+ * 실제 차트 데이터 기반 AI 심층 분석
+ */
+async function analyzeStockWithChartData(stock, stockData) {
+  if (!stockData?.technicals) {
+    return {
+      ...stock,
+      chartAnalysis: null,
+      verdict: 'HOLD',
+      verdictReason: '차트 데이터를 가져올 수 없어 기본 분석만 제공합니다.',
+    };
+  }
+
+  const t = stockData.technicals;
+  const chartUrl = generateChartUrl(stockData);
+  
+  const prompt = `당신은 20년 경력의 기술적 분석 전문가입니다. 실제 차트 데이터를 바탕으로 투자 판단을 내려주세요.
+
+## 종목 정보
+- 종목명: ${stock.name} (${stock.code})
+- 현재가: ${t.currentPrice.toLocaleString()}원
+
+## 실제 기술적 지표 (오늘 기준)
+- 5일 이동평균: ${t.ma5.toLocaleString()}원
+- 20일 이동평균: ${t.ma20.toLocaleString()}원
+${t.ma60 ? `- 60일 이동평균: ${t.ma60.toLocaleString()}원` : ''}
+- RSI (14일): ${t.rsi}
+- 볼린저밴드 상단: ${t.bollingerUpper.toLocaleString()}원
+- 볼린저밴드 하단: ${t.bollingerLower.toLocaleString()}원
+- 거래량 비율 (vs 20일평균): ${t.volumeRatio}배
+- 5일 수익률: ${t.priceChange5d}%
+- 20일 수익률: ${t.priceChange20d}%
+- 20일 지지선: ${t.support.toLocaleString()}원
+- 20일 저항선: ${t.resistance.toLocaleString()}원
+
+## 분석 요청
+위 지표를 바탕으로 다음 JSON 형식으로 분석해주세요:
+
+{
+  "verdict": "BUY 또는 HOLD 또는 SELL 또는 WAIT",
+  "confidence": 1-10 사이 확신도,
+  "verdictReason": "왜 이 판단을 내렸는지 핵심 이유 (이동평균선 배열, RSI, 거래량 등 근거 제시)",
+  "chartPattern": "현재 차트 패턴 (예: 골든크로스, 데드크로스, 박스권, 상승채널, 하락쐐기 등)",
+  "keyLevels": {
+    "strongSupport": 강한 지지선(숫자),
+    "strongResistance": 강한 저항선(숫자),
+    "entryPoint": 적정 매수가(숫자),
+    "targetPrice": 목표가(숫자),
+    "stopLoss": 손절가(숫자)
+  },
+  "timing": "진입 타이밍 조언 (예: 즉시 진입, 조정 시 매수, 돌파 확인 후 진입)",
+  "riskReward": "예상 손익비 (예: 1:2.5)",
+  "shortTermOutlook": "향후 1-2주 전망",
+  "warning": "주의사항 또는 리스크 요인"
+}
+
+JSON만 출력하세요.`;
+
+  const response = await callGeminiAPI(prompt);
+  
+  if (response) {
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const analysis = JSON.parse(jsonMatch[0]);
+        return {
+          ...stock,
+          chartUrl,
+          realTechnicals: t,
+          chartAnalysis: analysis,
+          verdict: analysis.verdict,
+          verdictReason: analysis.verdictReason,
+        };
+      }
+    } catch (e) {
+      console.log(`   ⚠️ ${stock.name} 차트 분석 파싱 실패`);
+    }
+  }
+
+  // 기본 분석
+  let verdict = 'HOLD';
+  let verdictReason = '';
+  
+  if (t.rsi < 30 && t.currentPrice < t.ma20) {
+    verdict = 'WAIT';
+    verdictReason = `RSI ${t.rsi}로 과매도 구간이나 20일선 아래에서 거래 중. 반등 신호 확인 후 진입 권장.`;
+  } else if (t.rsi < 40 && t.currentPrice > t.ma20 && t.volumeRatio > 1.2) {
+    verdict = 'BUY';
+    verdictReason = `RSI ${t.rsi}로 저점권, 20일선 위에서 거래량 증가(${t.volumeRatio}배). 매수 타이밍.`;
+  } else if (t.rsi > 70) {
+    verdict = 'SELL';
+    verdictReason = `RSI ${t.rsi}로 과매수 구간. 차익실현 권장.`;
+  } else {
+    verdict = 'HOLD';
+    verdictReason = `RSI ${t.rsi}, 중립 구간. 추세 확인 후 대응.`;
+  }
+
+  return {
+    ...stock,
+    chartUrl,
+    realTechnicals: t,
+    chartAnalysis: null,
+    verdict,
+    verdictReason,
+  };
+}
+
+/**
  * AI 기반 종합 투자 인사이트 생성
  */
 async function generateInvestmentInsight(sectors, stocks, news) {
   const prompt = `당신은 헤지펀드 CIO입니다. 오늘의 시장을 대중 심리와 숨겨진 기회 관점에서 분석해주세요.
 
 투자 테마: ${sectors.map(s => s.name).join(', ')}
-주목 종목: ${stocks.map(s => s.name).join(', ')}
+주목 종목: ${stocks.map(s => `${s.name}(${s.verdict || 'HOLD'})`).join(', ')}
 
 다음 형식으로 150자 이내 작성:
 "[핵심 트렌드/심리] → [투자 기회] → [주의점]"
@@ -384,6 +664,14 @@ function generateEmailHTML(data) {
     .badge-bullish { background: #dcfce7; color: #166534; }
     .badge-bearish { background: #fee2e2; color: #991b1b; }
     .badge-neutral { background: #fef3c7; color: #92400e; }
+    .verdict-box { padding: 12px 16px; border-radius: 8px; margin: 12px 0; font-weight: 600; }
+    .verdict-BUY { background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); color: white; }
+    .verdict-SELL { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; }
+    .verdict-HOLD { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; }
+    .verdict-WAIT { background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); color: white; }
+    .chart-img { width: 100%; max-width: 600px; border-radius: 8px; margin: 12px 0; border: 1px solid #e2e8f0; }
+    .technicals { background: #1e293b; color: #e2e8f0; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 12px; margin: 10px 0; }
+    .technicals span { display: inline-block; margin-right: 16px; }
     .stock-grid { display: grid; gap: 8px; margin-top: 8px; }
     .stock-row { display: flex; justify-content: space-between; padding: 8px; background: white; border-radius: 8px; }
     .price { font-weight: 600; color: #4f46e5; }
@@ -431,11 +719,55 @@ function generateEmailHTML(data) {
     </div>
   `).join('')}
 
-  <h2>💎 숨은 수혜주 발굴</h2>
-  ${stocks.map(stock => `
+  <h2>💎 AI 차트 분석 & 투자 판단</h2>
+  ${stocks.map(stock => {
+    const verdict = stock.verdict || 'HOLD';
+    const verdictText = {
+      'BUY': '🟢 매수',
+      'SELL': '🔴 매도', 
+      'HOLD': '🟡 관망',
+      'WAIT': '🔵 대기'
+    }[verdict] || '🟡 관망';
+    
+    const t = stock.realTechnicals;
+    const ca = stock.chartAnalysis;
+    
+    return `
     <div class="card">
       <strong>${stock.name}</strong> <span style="color:#64748b">(${stock.code})</span>
       <span class="badge" style="background:#e0e7ff;color:#4338ca;margin-left:8px">${stock.theme || stock.sector || ''}</span>
+      
+      <!-- 투자 판단 -->
+      <div class="verdict-box verdict-${verdict}">
+        ${verdictText} ${ca?.confidence ? `(확신도: ${ca.confidence}/10)` : ''}
+      </div>
+      <p><strong>📋 판단 근거:</strong> ${stock.verdictReason || ''}</p>
+      
+      <!-- 차트 이미지 -->
+      ${stock.chartUrl ? `<img src="${stock.chartUrl}" alt="${stock.name} 차트" class="chart-img" />` : ''}
+      
+      <!-- 실제 기술적 지표 -->
+      ${t ? `
+      <div class="technicals">
+        <span>📊 RSI: ${t.rsi}</span>
+        <span>📈 5일선: ${t.ma5?.toLocaleString()}</span>
+        <span>📉 20일선: ${t.ma20?.toLocaleString()}</span>
+        ${t.ma60 ? `<span>60일선: ${t.ma60?.toLocaleString()}</span>` : ''}
+        <span>📊 거래량: ${t.volumeRatio}배</span>
+        <br/>
+        <span>5일 수익률: ${t.priceChange5d > 0 ? '+' : ''}${t.priceChange5d}%</span>
+        <span>20일 수익률: ${t.priceChange20d > 0 ? '+' : ''}${t.priceChange20d}%</span>
+      </div>
+      ` : ''}
+      
+      <!-- AI 차트 분석 -->
+      ${ca ? `
+      <p><strong>📈 차트 패턴:</strong> ${ca.chartPattern || '-'}</p>
+      <p><strong>⏰ 진입 타이밍:</strong> ${ca.timing || '-'}</p>
+      <p><strong>📊 손익비:</strong> ${ca.riskReward || '-'}</p>
+      <p><strong>🔮 단기 전망:</strong> ${ca.shortTermOutlook || '-'}</p>
+      ${ca.warning ? `<p style="color:#ef4444"><strong>⚠️ 주의:</strong> ${ca.warning}</p>` : ''}
+      ` : ''}
       
       ${stock.whyNow ? `<p style="background:#fef3c7;padding:10px;border-radius:8px;margin:10px 0"><strong>🔥 지금 주목하는 이유:</strong> ${stock.whyNow}</p>` : ''}
       ${stock.hiddenLink ? `<p><strong>🔗 숨겨진 연결고리:</strong> ${stock.hiddenLink}</p>` : ''}
@@ -443,35 +775,35 @@ function generateEmailHTML(data) {
       <div class="stock-grid">
         <div class="stock-row">
           <span>현재가</span>
-          <span class="price">${Number(stock.currentPrice).toLocaleString()}원</span>
+          <span class="price">${Number(t?.currentPrice || stock.currentPrice).toLocaleString()}원</span>
         </div>
         <div class="stock-row">
           <span>목표가</span>
-          <span class="target">${Number(stock.targetPrice).toLocaleString()}원 (+${Math.round((stock.targetPrice / stock.currentPrice - 1) * 100)}%)</span>
+          <span class="target">${Number(ca?.keyLevels?.targetPrice || stock.targetPrice).toLocaleString()}원</span>
         </div>
         <div class="stock-row">
           <span>손절가</span>
-          <span class="stop">${Number(stock.stopLoss).toLocaleString()}원</span>
+          <span class="stop">${Number(ca?.keyLevels?.stopLoss || stock.stopLoss).toLocaleString()}원</span>
         </div>
         <div class="stock-row">
-          <span>매수 희망가</span>
-          <span>${Number(stock.entryPrice).toLocaleString()}원</span>
+          <span>적정 매수가</span>
+          <span>${Number(ca?.keyLevels?.entryPoint || stock.entryPrice).toLocaleString()}원</span>
         </div>
         <div class="stock-row">
-          <span>RSI</span>
-          <span>${stock.rsiValue}</span>
+          <span>지지선 / 저항선</span>
+          <span>${Number(t?.support || stock.supportLevel).toLocaleString()} / ${Number(t?.resistance || stock.resistanceLevel).toLocaleString()}원</span>
         </div>
       </div>
+      
       <p><strong>🔍 기본적 분석:</strong> ${stock.fundamentalAnalysis}</p>
-      <p><strong>📊 기술적 분석:</strong> ${stock.technicalAnalysis}</p>
       <p><strong>🎯 매매 시나리오:</strong> ${stock.investmentScenario}</p>
       ${stock.riskFactor ? `<p style="color:#ef4444;font-size:13px">⚠️ 리스크: ${stock.riskFactor}</p>` : ''}
     </div>
-  `).join('')}
+  `}).join('')}
 
   <div class="footer">
     <p>⚠️ 본 분석은 AI가 생성한 참고용 정보이며, 투자의 최종 책임은 본인에게 있습니다.</p>
-    <p>🤖 Powered by Google Gemini AI | GitHub Actions 자동 생성</p>
+    <p>🤖 Powered by Google Gemini AI + Yahoo Finance | GitHub Actions 자동 생성</p>
   </div>
 </body>
 </html>
@@ -527,7 +859,7 @@ async function main() {
 
   // 1. 뉴스 수집
   console.log('\n📰 뉴스 수집 중...');
-  const news = await fetchNaverNews('경제 증시 투자 주식', 10);
+  const news = await fetchNaverNews('경제 증시 투자 주식 트렌드', 15);
   console.log(`   ${news.length}개 뉴스 수집 완료`);
 
   // 2. AI 섹터 분석
@@ -537,10 +869,24 @@ async function main() {
 
   // 3. AI 종목 추천
   console.log('\n💎 AI 종목 추천 생성 중...');
-  const stocks = await generateStockRecommendationsWithAI(sectors, news);
-  console.log(`   ${stocks.length}개 종목 추천 완료`);
+  const rawStocks = await generateStockRecommendationsWithAI(sectors, news);
+  console.log(`   ${rawStocks.length}개 종목 추천 완료`);
 
-  // 4. 투자 인사이트 생성
+  // 4. 실제 차트 데이터 수집 및 심층 분석
+  console.log('\n📊 실제 차트 데이터 분석 중...');
+  const stocks = [];
+  for (const stock of rawStocks) {
+    console.log(`   📈 ${stock.name} (${stock.code}) 분석 중...`);
+    const stockData = await fetchStockData(stock.code);
+    const analyzedStock = await analyzeStockWithChartData(stock, stockData);
+    stocks.push(analyzedStock);
+    
+    // API 제한 방지를 위한 짧은 대기
+    await new Promise(r => setTimeout(r, 500));
+  }
+  console.log(`   ✅ ${stocks.length}개 종목 차트 분석 완료`);
+
+  // 5. 투자 인사이트 생성
   console.log('\n💡 투자 인사이트 생성 중...');
   const insight = await generateInvestmentInsight(sectors, stocks, news);
   console.log('   인사이트 생성 완료');
