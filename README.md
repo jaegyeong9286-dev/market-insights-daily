@@ -114,22 +114,63 @@ const fetchData = async () => {
 
 ---
 
+## 🤖 GitHub Actions 자동화 (매일 이메일 발송)
+
+### 1. GitHub에 저장소 연결
+
+Lovable에서 GitHub 연동 후 저장소를 생성하세요.
+
+### 2. GitHub Secrets 설정
+
+저장소 → Settings → Secrets and variables → Actions에서 다음 시크릿을 추가하세요:
+
+| 시크릿 이름 | 설명 | 필수 |
+|------------|------|------|
+| `NAVER_CLIENT_ID` | 네이버 API Client ID | 선택 |
+| `NAVER_CLIENT_SECRET` | 네이버 API Client Secret | 선택 |
+| `RESEND_API_KEY` | [Resend](https://resend.com) API 키 | 이메일 발송 시 필수 |
+| `EMAIL_TO` | 수신할 이메일 주소 | 이메일 발송 시 필수 |
+
+### 3. Resend 설정 (무료 월 3,000건)
+
+1. [resend.com](https://resend.com) 가입
+2. API Keys에서 키 생성
+3. (선택) 도메인 인증하면 커스텀 발신자 주소 사용 가능
+
+### 4. 자동 실행
+
+- **자동**: 매일 한국시간 오전 8시에 실행
+- **수동**: Actions 탭 → Daily Investment Analysis → Run workflow
+
+### 5. 결과 확인
+
+- Actions 탭에서 실행 로그 확인
+- Artifacts에서 분석 결과 (JSON, HTML) 다운로드 가능
+
+---
+
 ## 📁 프로젝트 구조
 
 ```
-src/
-├── components/
-│   └── dashboard/
-│       ├── DashboardHeader.tsx  # 헤더 컴포넌트
-│       ├── NewsSection.tsx      # 뉴스 섹션
-│       ├── SectorSection.tsx    # 섹터 분석 섹션
-│       └── StockSection.tsx     # 종목 추천 섹션
-├── hooks/
-│   └── useInvestmentData.ts     # 데이터 관리 훅
-├── types/
-│   └── investment.ts            # 타입 정의
-└── pages/
-    └── Index.tsx                # 메인 페이지
+├── .github/
+│   └── workflows/
+│       └── daily-analysis.yml   # GitHub Actions 워크플로우
+├── scripts/
+│   └── daily-analysis.mjs       # 자동화 스크립트
+├── src/
+│   ├── components/
+│   │   └── dashboard/
+│   │       ├── DashboardHeader.tsx
+│   │       ├── NewsSection.tsx
+│   │       ├── SectorSection.tsx
+│   │       └── StockSection.tsx
+│   ├── hooks/
+│   │   └── useInvestmentData.ts
+│   ├── types/
+│   │   └── investment.ts
+│   └── pages/
+│       └── Index.tsx
+└── output/                      # 분석 결과 저장 (자동 생성)
 ```
 
 ---
@@ -139,6 +180,7 @@ src/
 - 본 대시보드의 분석 정보는 **참고용**입니다.
 - **투자의 최종 책임은 본인에게 있습니다.**
 - 네이버 API는 **일 25,000건** 호출 제한이 있습니다.
+- GitHub Actions 무료 플랜은 **월 2,000분** 제한이 있습니다.
 
 ---
 
@@ -148,6 +190,8 @@ src/
 - Vite
 - Tailwind CSS
 - shadcn/ui
+- GitHub Actions (자동화)
+- Resend (이메일)
 
 ---
 
